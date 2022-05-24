@@ -1,0 +1,7 @@
+node_modules
+files_in/*
+!files_in/input here
+files_map/*
+!files_map/map here
+files_out/*
+!files_out/output here
