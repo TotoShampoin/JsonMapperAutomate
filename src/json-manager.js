@@ -5,53 +5,45 @@ const isGeoJSON = (json) => {
     return true;
 }
 
-const getJSONfields = (json) => {
-    if(json === null) return null;
-    if(Array.isArray(json) && json[0] && typeof json[0] === 'object') {
-        /**
-         * @type {{key: string, count: number, content: any, everywhere: boolean}}
-         */
-        const fields = [];
-        json.forEach(element => {
-            for(const key in element) {
-                const field = fields.find(field => field.key === key);
-                if(!field) {
-                    fields.push({
-                        key: key,
-                        count: 1,
-                        content: typeof element[key] === 'object' ? (
-                            isGeoJSON(element[key]) ? `geojson (${element[key].type})` : getJSONfields(element[key])
-                        ) : typeof element[key],
-                    });
-                } else {
-                    field.count++;
-                }
+const getObjectStructure_aux = (object) => {
+    const result = {
+        key: '',
+        content: [],
+    };
+
+    if (Array.isArray(object)) {
+        for(let i = 0; i < object.length; i++) {
+            let objstruct = getObjectStructure_aux(object[i]);
+            if(typeof object[i] === 'object') {
+                result.content.push(...objstruct.content);
+                result.content.sort((a,b) => a.key.localeCompare(b.key) || b.content.length - a.content.length);
+                // remove duplicates non objects
+                result.content = result.content.filter((item, index, self) =>
+                    index === self.findIndex((t) => (
+                        t.key === item.key && t.content.length >= item.content.length
+                    ))
+                );
+            } else {
+                result.content = [...result.content, objstruct];
             }
-        });
-        return fields.map(field => ({
-            ...field,
-        }));
+        }
+    } else if (typeof object === 'object') {
+        if(isGeoJSON(object)) {
+            result.content = "geojson (" + object.type + ")";
+        } else {
+            result.content = Object.keys(object).map(key => {
+                const objstruct = getObjectStructure_aux(object[key])
+                objstruct.key = key;
+                return objstruct;
+            });
+        }
+    } else {
+        result.content = typeof object;
     }
-    if(Array.isArray(json)) {
-        return json.map(element => ({
-            key: '',
-            count: 1,
-            content: typeof element === 'object' ? (
-                isGeoJSON(element) ? `geojson (${element.type})` : getJSONfields(element)
-            ) : typeof element,
-        }));
-    }
-    if(typeof json === 'object') {
-        return Object.keys(json).map(key => ({
-            key,
-            count: 1,
-            content: typeof json[key] === 'object' ? (
-                isGeoJSON(json[key]) ? `geojson (${json[key].type})` : getJSONfields(json[key])
-            ) : typeof json[key],
-        }));
-    }
-    return null;
+
+    return result;
 }
+const getObjectStructure = (object) => getObjectStructure_aux(object).content;
 
 const getJSONfields_HTML = (fields, parent = "") => {
     const html = fields.map(field => `
@@ -75,13 +67,15 @@ class JSonManager {
         this.input = json;
         this.map = [];
     }
-    getInputFields() { return getJSONfields(this.input) }
+    getInputFields() {
+        return getObjectStructure(this.input);
+    }
     getInputFields_HTML() {
         const fields = this.getInputFields();
         return getJSONfields_HTML(fields)
     }
     addMap(input_path, output_key) {
-        if(this.map.find(map => map.output_key === output_key)) return false;
+        if(this.map.find(map => !output_key.endsWith("[]") && map.output_key === output_key)) return false;
         this.map.push({
             input_path,
             output_key,
@@ -112,17 +106,31 @@ class JSonManager {
                 input_path.forEach(path => {
                     current = current[path];
                 });
-                if(output_key.length === 1) {
-                    output[output_key[0]] = current;
-                } else {
+                if(output_key.length !== 1) {
                     let current_output = output;
                     output_key.forEach((key, index) => {
-                        if(index === output_key.length - 1) {
-                            current_output[key] = current;
+                        if(key.endsWith('[]')) {
+                            let key_bis = key.slice(0, -2);
+                            if(index === output_key.length - 1) {
+                                current_output[key_bis] = [...(current_output[key_bis] || []), current];
+                            } else {
+                                current_output = current_output[key_bis] = [...(current_output[key_bis] || [])];
+                            }
                         } else {
-                            current_output = current_output[key] = {...current_output[key]};
+                            if(index === output_key.length - 1) {
+                                current_output[key] = current;
+                            } else {
+                                current_output = current_output[key] = {...current_output[key]};
+                            }
                         }
                     });
+                } else {
+                    if(output_key[0].endsWith('[]')) {
+                        let key_bis = output_key[0].slice(0, -2);
+                        output[key_bis] = [...(output[key_bis] || []), current];
+                    } else {
+                        output[output_key[0]] = current;
+                    }
                 }
                 return output;
             }, {}));
@@ -135,7 +143,13 @@ class JSonManager {
                 input_path.forEach(path => {
                     current = current[path];
                 });
-                output[output_key] = current;
+                console.log(output_key);
+                if(output_key.endsWith('[]')) {
+                    let key_bis = output_key.slice(0, -2);
+                    output[key_bis] = [...(output[key_bis] || []), current];
+                } else {
+                    output[output_key] = current;
+                }
                 return output;
             }, {});
         }
